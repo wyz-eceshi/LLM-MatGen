@@ -1,0 +1,174 @@
+import numpy as np
+import pytest
+from pydantic import ValidationError
+from pymatgen.core import Lattice, Structure
+
+from llm_matgen.generators.models import OutputFormat
+from llm_matgen.io.exporters import ExportOptions
+from llm_matgen.pipeline import GenerationPipeline
+
+
+def test_edge_displacement_matches_hand_calculated_point():
+    from llm_matgen.generators.dislocation import isotropic_displacement_field
+
+    displacement = isotropic_displacement_field(
+        np.array([[1.0, 0.0, 0.0]]),
+        burgers_vector=(1.0, 0.0, 0.0),
+        character="edge",
+        poisson_ratio=0.3,
+    )[0]
+    expected_y = -(1 / (2 * np.pi)) * (1 / (4 * (1 - 0.3)))
+    assert np.allclose(displacement, [0.0, expected_y, 0.0])
+
+
+def test_screw_displacement_matches_quarter_turn():
+    from llm_matgen.generators.dislocation import isotropic_displacement_field
+
+    displacement = isotropic_displacement_field(
+        np.array([[1.0, 1.0, 0.0]]),
+        burgers_vector=(0.0, 0.0, 1.0),
+        character="screw",
+        poisson_ratio=0.3,
+    )[0]
+    assert np.allclose(displacement, [0.0, 0.0, 0.125])
+
+
+def test_displacement_field_is_finite_at_core_and_rejects_invalid_inputs():
+    from llm_matgen.generators.dislocation import isotropic_displacement_field
+
+    value = isotropic_displacement_field(
+        np.zeros((1, 3)),
+        burgers_vector=(1.0, 0.0, 0.0),
+        character="edge",
+        poisson_ratio=0.3,
+        core_cutoff=0.1,
+    )
+    assert np.isfinite(value).all()
+    with pytest.raises(ValueError, match="Burgers"):
+        isotropic_displacement_field(np.zeros((1, 3)), (0, 0, 0), "edge", 0.3)
+    with pytest.raises(ValueError, match="Poisson"):
+        isotropic_displacement_field(np.zeros((1, 3)), (1, 0, 0), "edge", 0.5)
+
+
+def fixture_structure() -> Structure:
+    return Structure(Lattice.cubic(4.0), ["Al"], [[0, 0, 0]])
+
+
+def nb_bcc_fixture() -> Structure:
+    """Conventional BCC Nb cell used for the non-[001] regression case."""
+    return Structure.from_spacegroup(
+        "Im-3m",
+        Lattice.cubic(3.317632378768019),
+        ["Nb"],
+        [[0, 0, 0]],
+    )
+
+
+def make_params(**updates):
+    from llm_matgen.generators.dislocation import DislocationParams
+
+    values = dict(
+        line_direction=(0, 0, 1),
+        burgers_vector=(0.0, 0.0, 1.0),
+        slip_plane=(1, 0, 0),
+        character="screw",
+        core_position=(0.5, 0.5),
+        radius=5.0,
+        poisson_ratio=0.3,
+    )
+    values.update(updates)
+    return DislocationParams(**values)
+
+
+def test_dislocation_generator_builds_and_displaces_cylindrical_supercell():
+    from llm_matgen.generators.dislocation import DislocationGenerator
+
+    source = fixture_structure()
+    result = DislocationGenerator().generate(source, make_params())
+    child = result.generated[0]
+    assert child.structure.num_sites > source.num_sites
+    assert child.record.actual_parameters["character"] == "screw"
+    assert child.record.actual_parameters["boundary_conditions"] == ["non-periodic", "non-periodic", "periodic"]
+    assert np.isfinite(child.structure.cart_coords).all()
+
+
+def test_nb_111_screw_does_not_drop_supercell_atoms():
+    from llm_matgen.generators.dislocation import DislocationGenerator
+
+    source = nb_bcc_fixture()
+    a_half = source.lattice.a / 2
+    result = DislocationGenerator().generate(
+        source,
+        make_params(
+            line_direction=(1, 1, 1),
+            burgers_vector=(a_half, a_half, a_half),
+            slip_plane=(1, -1, 0),
+            radius=15.0,
+        ),
+    )
+    child = result.generated[0]
+
+    # A 10x10x1 expansion of the 2-site conventional cell has 200 sites.
+    # The corrected oriented construction may use a larger commensurate cell,
+    # but it must never return fewer sites than the un-oriented expansion.
+    assert child.structure.num_sites >= 200
+    assert child.record.actual_parameters["pre_displacement_atom_count"] == child.structure.num_sites
+
+
+def test_nb_111_screw_line_is_aligned_with_periodic_axis():
+    from llm_matgen.generators.dislocation import DislocationGenerator
+
+    source = nb_bcc_fixture()
+    a_half = source.lattice.a / 2
+    result = DislocationGenerator().generate(
+        source,
+        make_params(
+            line_direction=(1, 1, 1),
+            burgers_vector=(a_half, a_half, a_half),
+            slip_plane=(1, -1, 0),
+            radius=15.0,
+        ),
+    )
+    child = result.generated[0]
+    periodic_axis = child.structure.lattice.matrix[2]
+    periodic_axis = periodic_axis / np.linalg.norm(periodic_axis)
+    expected = np.array([0.0, 0.0, 1.0])
+    assert np.linalg.norm(np.cross(periodic_axis, expected)) < 1e-6
+    assert child.record.actual_parameters["orientation_matrix"][2] == [1, 1, 1]
+
+
+def test_dislocation_generator_rejects_character_mismatch():
+    from llm_matgen.generators.dislocation import DislocationGenerator
+
+    with pytest.raises(ValueError, match="Burgers vector"):
+        DislocationGenerator().generate(
+            fixture_structure(), make_params(burgers_vector=(1.0, 0.0, 0.0))
+        )
+
+
+def test_dislocation_enforces_atom_limit():
+    from llm_matgen.generators.dislocation import DislocationGenerator
+
+    with pytest.raises(ValueError, match="atom limit"):
+        DislocationGenerator().generate(fixture_structure(), make_params(max_atoms_per_structure=1))
+
+
+def test_dislocation_pipeline_exports_all_formats(tmp_path):
+    from llm_matgen.generators.dislocation import DislocationGenerator
+
+    result = GenerationPipeline(tmp_path).run(
+        DislocationGenerator(),
+        fixture_structure(),
+        make_params(),
+        ExportOptions(formats=list(OutputFormat)),
+        run_id="dislocation",
+    )
+    assert result.ok
+    assert {artifact.format for artifact in result.artifacts} == set(OutputFormat)
+
+
+def test_dislocation_is_public_generator_api():
+    from llm_matgen.generators import DislocationGenerator, DislocationParams
+
+    assert DislocationGenerator is not None
+    assert DislocationParams is not None

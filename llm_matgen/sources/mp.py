@@ -1,0 +1,535 @@
+"""Materials Project client boundary with dependency injection and stable errors."""
+
+from __future__ import annotations
+
+import os
+import json
+import re
+import random
+import time
+from contextlib import nullcontext
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Callable, Literal, Protocol, TypeVar
+
+from pydantic import BaseModel, ConfigDict, NonNegativeFloat, PositiveInt, model_validator
+from pymatgen.core import Structure
+from pymatgen.io.cif import CifWriter
+
+from llm_matgen.io.readers import StructureReadError, read_structure
+from llm_matgen.sources.classifier import (
+    ClassificationResult,
+    DeterministicStructureClassifier,
+    StructureClassifier,
+)
+from llm_matgen.sources.models import SourceStructure
+from llm_matgen.utils.structure import structure_sha256
+
+
+class MPError(RuntimeError):
+    """Base class for Materials Project boundary failures."""
+
+
+class MPAuthenticationError(MPError):
+    pass
+
+
+class MPRateLimitError(MPError):
+    pass
+
+
+class MPUnavailableError(MPError):
+    pass
+
+
+class MPDataError(MPError):
+    pass
+
+
+class MPCancelledError(MPError):
+    pass
+
+
+class MPClientFactory(Protocol):
+    def __call__(self, api_key: str) -> Any: ...
+
+
+class MaterialSearchQuery(BaseModel):
+    elements: list[str] | None = None
+    chemsys: str | None = None
+    formula: str | None = None
+    material_ids: list[str] | None = None
+    n_elements: PositiveInt | None = None
+    formation_energy_max: float | None = None
+    band_gap_min: NonNegativeFloat | None = None
+    band_gap_max: NonNegativeFloat | None = None
+    structure_class: Literal["layered", "perovskite", "spinel", "rocksalt", "fluorite"] | None = None
+    limit: PositiveInt = 100
+
+    @model_validator(mode="after")
+    def validate_query(self):
+        if not any(
+            value is not None
+            for value in (
+                self.elements,
+                self.chemsys,
+                self.formula,
+                self.material_ids,
+                self.n_elements,
+                self.formation_energy_max,
+                self.band_gap_min,
+                self.band_gap_max,
+            )
+        ):
+            raise ValueError("at least one server-side search criterion is required")
+        if (
+            self.band_gap_min is not None
+            and self.band_gap_max is not None
+            and self.band_gap_min > self.band_gap_max
+        ):
+            raise ValueError("band gap minimum cannot exceed maximum")
+        return self
+
+
+class MaterialSummary(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
+
+    material_id: str
+    formula_pretty: str | None = None
+    formation_energy_per_atom: float | None = None
+    band_gap: float | None = None
+    structure: Any | None = None
+    classification: ClassificationResult | None = None
+
+
+@dataclass
+class MPDownloadFailure:
+    material_id: str
+    error_type: str
+    message: str
+
+
+@dataclass
+class MPDownloadResult:
+    successes: list[SourceStructure] = field(default_factory=list)
+    failures: list[MPDownloadFailure] = field(default_factory=list)
+
+
+class PropertyValue(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    value: Any | None = None
+    available: bool
+    endpoint: str
+    method: str | None = None
+    error: str | None = None
+
+
+class MaterialProperties(BaseModel):
+    material_id: str
+    properties: dict[str, PropertyValue]
+
+
+def _default_client_factory(api_key: str):
+    from mp_api.client import MPRester
+
+    return MPRester(api_key)
+
+
+T = TypeVar("T")
+
+
+class MPCollector:
+    PROPERTY_ENDPOINTS = {
+        "thermo": "thermo",
+        "electronic": "electronic_structure",
+        "magnetism": "magnetism",
+        "dielectric": "dielectric",
+        "phonon": "phonon",
+        "elasticity": "elasticity",
+    }
+    def __init__(
+        self,
+        api_key: str | None = None,
+        *,
+        client_factory: MPClientFactory | None = None,
+        max_attempts: int = 3,
+        base_delay: float = 0.5,
+        jitter: float = 0.1,
+        request_interval: float = 0.0,
+        sleep: Callable[[float], None] = time.sleep,
+        monotonic: Callable[[], float] = time.monotonic,
+        random_fn: Callable[[], float] = random.random,
+        cancel_check: Callable[[], bool] | None = None,
+        classifier: StructureClassifier | None = None,
+    ):
+        self._api_key = api_key or os.environ.get("MP_API_KEY")
+        if not self._api_key:
+            raise MPAuthenticationError(
+                "Materials Project API key is required; set MP_API_KEY or pass api_key"
+            )
+        self.client_factory = client_factory or _default_client_factory
+        self.max_results = 1000
+        if max_attempts <= 0:
+            raise ValueError("max_attempts must be positive")
+        if min(base_delay, jitter, request_interval) < 0:
+            raise ValueError("retry timing values cannot be negative")
+        self.max_attempts = max_attempts
+        self.base_delay = base_delay
+        self.jitter = jitter
+        self.request_interval = request_interval
+        self._sleep = sleep
+        self._monotonic = monotonic
+        self._random = random_fn
+        self._cancel_check = cancel_check or (lambda: False)
+        self._last_request_started: float | None = None
+        self.classifier = classifier or DeterministicStructureClassifier()
+
+    def execute(self, operation: Callable[[Any], T]) -> T:
+        for attempt in range(1, self.max_attempts + 1):
+            if self._cancel_check():
+                raise MPCancelledError("Materials Project request was cancelled")
+            self._wait_for_request_interval()
+            try:
+                client = self.client_factory(self._api_key)
+                manager = client if hasattr(client, "__enter__") else nullcontext(client)
+                with manager as active_client:
+                    return operation(active_client)
+            except MPCancelledError:
+                raise
+            except Exception as exc:
+                mapped = exc if isinstance(exc, MPError) else self._map_error(exc)
+                retryable = isinstance(mapped, (MPRateLimitError, MPUnavailableError))
+                if not retryable or attempt >= self.max_attempts:
+                    if mapped is exc:
+                        raise
+                    raise mapped from exc
+                if self._cancel_check():
+                    raise MPCancelledError("Materials Project request was cancelled") from exc
+                retry_after = self._retry_after_seconds(exc)
+                delay = (
+                    retry_after
+                    if retry_after is not None
+                    else self.base_delay * (2 ** (attempt - 1)) + self.jitter * self._random()
+                )
+                self._sleep(delay)
+        raise AssertionError("unreachable retry state")
+
+    def _wait_for_request_interval(self) -> None:
+        now = self._monotonic()
+        if self._last_request_started is not None:
+            remaining = self.request_interval - (now - self._last_request_started)
+            if remaining > 0:
+                self._sleep(remaining)
+                now = self._monotonic()
+        self._last_request_started = now
+
+    @staticmethod
+    def _retry_after_seconds(exc: Exception) -> float | None:
+        response = getattr(exc, "response", None)
+        headers = getattr(exc, "headers", None) or getattr(response, "headers", None) or {}
+        value = headers.get("Retry-After") if hasattr(headers, "get") else None
+        if value is None:
+            return None
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            return None
+        return max(0.0, parsed)
+
+    def search(self, query: MaterialSearchQuery) -> list[MaterialSummary]:
+        if query.limit > self.max_results:
+            raise MPDataError(
+                f"search limit {query.limit} exceeds system limit {self.max_results}"
+            )
+        criteria: dict[str, Any] = {}
+        for name in ("elements", "chemsys", "formula", "material_ids"):
+            value = getattr(query, name)
+            if value is not None:
+                criteria[name] = value
+        if query.n_elements is not None:
+            criteria["num_elements"] = query.n_elements
+        if query.formation_energy_max is not None:
+            criteria["formation_energy"] = (None, query.formation_energy_max)
+        if query.band_gap_min is not None or query.band_gap_max is not None:
+            criteria["band_gap"] = (query.band_gap_min, query.band_gap_max)
+        criteria["chunk_size"] = min(100, query.limit)
+        criteria["num_chunks"] = None
+
+        def collect(client) -> list[MaterialSummary]:
+            documents = client.materials.summary.search(**criteria)
+            results: list[MaterialSummary] = []
+            for document in documents:
+                raw = document if isinstance(document, dict) else {
+                    name: getattr(document, name, None)
+                    for name in (
+                        "material_id",
+                        "formula_pretty",
+                        "formation_energy_per_atom",
+                        "band_gap",
+                        "structure",
+                    )
+                }
+                if not raw.get("material_id"):
+                    raise MPDataError("Materials Project summary is missing material_id")
+                results.append(MaterialSummary.model_validate(raw))
+                if len(results) >= self.max_results:
+                    break
+            if query.structure_class is not None:
+                filtered: list[MaterialSummary] = []
+                for item in results:
+                    try:
+                        if item.structure is None:
+                            raise ValueError("summary does not include a structure")
+                        classification = self.classifier.classify(
+                            item.structure,
+                            target=query.structure_class,
+                        )
+                    except Exception as exc:
+                        classification = ClassificationResult(
+                            label="unknown",
+                            matched=False,
+                            score=0,
+                            method="classification-error",
+                            evidence={"error": type(exc).__name__},
+                        )
+                    item = item.model_copy(update={"classification": classification})
+                    if classification.matched:
+                        filtered.append(item)
+                results = filtered
+            results.sort(key=lambda item: item.material_id)
+            return results[: query.limit]
+
+        return self.execute(collect)
+
+    def download(self, material_ids: list[str], output_dir: Path) -> MPDownloadResult:
+        destination = Path(output_dir).resolve()
+        destination.mkdir(parents=True, exist_ok=True)
+        result = MPDownloadResult()
+        for material_id in material_ids:
+            try:
+                self._validate_material_id(material_id)
+                reusable = self._load_reusable_download(material_id, destination)
+                if reusable is not None:
+                    result.successes.append(reusable)
+                    continue
+                document = self.execute(
+                    lambda client, mid=material_id: self._fetch_download_document(client, mid)
+                )
+                result.successes.append(
+                    self._write_download(material_id, document, destination)
+                )
+            except Exception as exc:
+                mapped = exc if isinstance(exc, MPError) else self._map_error(exc)
+                result.failures.append(
+                    MPDownloadFailure(
+                        material_id=material_id,
+                        error_type=type(mapped).__name__,
+                        message=str(mapped),
+                    )
+                )
+        return result
+
+    def fetch_properties(
+        self,
+        material_ids: list[str],
+        property_names: list[str],
+    ) -> list[MaterialProperties]:
+        unknown = sorted(set(property_names).difference(self.PROPERTY_ENDPOINTS))
+        if unknown:
+            raise MPDataError(f"unknown Materials Project properties: {', '.join(unknown)}")
+        by_material: dict[str, dict[str, PropertyValue]] = {
+            material_id: {} for material_id in material_ids
+        }
+        for property_name in property_names:
+            endpoint_name = self.PROPERTY_ENDPOINTS[property_name]
+            endpoint_label = f"materials.{endpoint_name}"
+            try:
+                documents = self.execute(
+                    lambda client, name=endpoint_name: list(
+                        getattr(client.materials, name).search(material_ids=material_ids)
+                    )
+                )
+                indexed = {
+                    str(self._document_value(document, "material_id")): document
+                    for document in documents
+                    if self._document_value(document, "material_id") is not None
+                }
+                for material_id in material_ids:
+                    document = indexed.get(material_id)
+                    if document is None:
+                        by_material[material_id][property_name] = PropertyValue(
+                            available=False,
+                            endpoint=endpoint_label,
+                        )
+                        continue
+                    method = self._document_value(document, "method")
+                    by_material[material_id][property_name] = PropertyValue(
+                        value=document,
+                        available=True,
+                        endpoint=endpoint_label,
+                        method=str(method) if method is not None else None,
+                    )
+            except MPError as exc:
+                for material_id in material_ids:
+                    by_material[material_id][property_name] = PropertyValue(
+                        available=False,
+                        endpoint=endpoint_label,
+                        error=str(exc),
+                    )
+        return [
+            MaterialProperties(material_id=material_id, properties=by_material[material_id])
+            for material_id in material_ids
+        ]
+
+    def search_substrates(self, material_ids: list[str]) -> list[Any]:
+        return self._special_query("substrates", material_ids)
+
+    def search_grain_boundaries(self, material_ids: list[str]) -> list[Any]:
+        return self._special_query("grain_boundaries", material_ids)
+
+    def _special_query(self, endpoint_name: str, material_ids: list[str]) -> list[Any]:
+        return self.execute(
+            lambda client: list(
+                getattr(client.materials, endpoint_name).search(material_ids=material_ids)
+            )
+        )
+
+    @staticmethod
+    def _validate_material_id(material_id: str) -> None:
+        if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", material_id) is None or ".." in material_id:
+            raise MPDataError("invalid Materials Project material ID")
+
+    @staticmethod
+    def _fetch_download_document(client, material_id: str):
+        documents = client.materials.summary.search(
+            material_ids=[material_id],
+            fields=["material_id", "structure", "database_IDs", "last_updated"],
+            chunk_size=1,
+            num_chunks=1,
+        )
+        documents = list(documents)
+        if len(documents) != 1:
+            raise MPDataError(f"expected one Materials Project structure for {material_id}")
+        return documents[0]
+
+    @staticmethod
+    def _document_value(document, name: str, default=None):
+        return document.get(name, default) if isinstance(document, dict) else getattr(document, name, default)
+
+    @classmethod
+    def _document_database_version(cls, document) -> str | None:
+        """Read version metadata from old and current MP response schemas."""
+        for field in ("database_version", "database_IDs", "last_updated"):
+            value = cls._document_value(document, field)
+            if value is not None:
+                return str(value)
+        return None
+
+    def _load_reusable_download(
+        self,
+        material_id: str,
+        destination: Path,
+    ) -> SourceStructure | None:
+        cif_path = destination / f"{material_id}.cif"
+        metadata_path = cif_path.with_suffix(".json")
+        if not cif_path.is_file() or not metadata_path.is_file():
+            return None
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            structure = read_structure(cif_path, fmt="cif")
+            actual_hash = structure_sha256(structure)
+            if metadata.get("structure_hash") != actual_hash:
+                return None
+            retrieved_at = datetime.fromisoformat(metadata["retrieved_at"])
+        except (OSError, ValueError, KeyError, StructureReadError):
+            return None
+        return SourceStructure(
+            artifact_id=material_id,
+            source_kind="materials-project",
+            source_reference=material_id,
+            structure_hash=actual_hash,
+            database_version=metadata.get("database_version"),
+            retrieved_at=retrieved_at,
+            local_path=cif_path,
+            structure=structure,
+        )
+
+    def _write_download(self, material_id: str, document, destination: Path) -> SourceStructure:
+        structure = self._document_value(document, "structure")
+        if not isinstance(structure, Structure):
+            raise MPDataError(f"Materials Project response for {material_id} has no valid structure")
+        response_id = str(self._document_value(document, "material_id", ""))
+        if response_id != material_id:
+            raise MPDataError(f"Materials Project returned {response_id!r} for {material_id}")
+        database_version = self._document_database_version(document)
+        retrieved_at = datetime.now(timezone.utc)
+        structure_hash = structure_sha256(structure)
+        cif_path = self._next_download_path(destination, material_id)
+        metadata_path = cif_path.with_suffix(".json")
+        cif_temp = cif_path.with_suffix(cif_path.suffix + ".tmp")
+        metadata_temp = metadata_path.with_suffix(metadata_path.suffix + ".tmp")
+        metadata = {
+            "material_id": material_id,
+            "structure_hash": structure_hash,
+            "database_version": database_version,
+            "retrieved_at": retrieved_at.isoformat(),
+        }
+        try:
+            CifWriter(structure).write_file(cif_temp)
+            metadata_temp.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+            os.replace(cif_temp, cif_path)
+            os.replace(metadata_temp, metadata_path)
+        except Exception:
+            cif_temp.unlink(missing_ok=True)
+            metadata_temp.unlink(missing_ok=True)
+            if cif_path.exists() and not metadata_path.exists():
+                cif_path.unlink(missing_ok=True)
+            raise
+        restored = read_structure(cif_path, fmt="cif")
+        restored_hash = structure_sha256(restored)
+        if restored_hash != structure_hash:
+            # High-symmetry structures (e.g. R-3m) can produce different site
+            # ordering / symmetry-equivalent positions after CIF round-trip.
+            # Fall back to pymatgen's StructureMatcher for structural equivalence.
+            from pymatgen.analysis.structure_matcher import StructureMatcher
+            if not StructureMatcher().fit(structure, restored):
+                raise MPDataError("downloaded CIF round-trip changed the structure hash "
+                                  "and structures are not equivalent")
+        return SourceStructure(
+            artifact_id=material_id,
+            source_kind="materials-project",
+            source_reference=material_id,
+            structure_hash=restored_hash,
+            database_version=database_version,
+            retrieved_at=retrieved_at,
+            local_path=cif_path,
+            structure=restored,
+        )
+
+    @staticmethod
+    def _next_download_path(destination: Path, material_id: str) -> Path:
+        base = destination / f"{material_id}.cif"
+        if not base.exists() and not base.with_suffix(".json").exists():
+            return base
+        version = 2
+        while True:
+            candidate = destination / f"{material_id}-v{version}.cif"
+            if not candidate.exists() and not candidate.with_suffix(".json").exists():
+                return candidate
+            version += 1
+
+    @staticmethod
+    def _map_error(exc: Exception) -> MPError:
+        response = getattr(exc, "response", None)
+        status = getattr(exc, "status_code", None) or getattr(response, "status_code", None)
+        if status in {401, 403}:
+            return MPAuthenticationError("Materials Project authentication failed")
+        if status == 429:
+            return MPRateLimitError("Materials Project rate limit exceeded")
+        if isinstance(exc, (TimeoutError, ConnectionError)) or (
+            isinstance(status, int) and status >= 500
+        ):
+            return MPUnavailableError("Materials Project service is unavailable")
+        return MPDataError("Materials Project returned malformed or unusable data")

@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "llm-matgen"
+version = "0.2.1"
+description = "LLM-independent material crystal structure generation toolkit"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+dependencies = [
+    "pymatgen>=2024",
+    "mp-api>=0.5",
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "ase>=3.22",
+    "pydantic>=2.0",
+]
+
+[project.optional-dependencies]
+sqs = ["sqsgenerator>=0.5"]
+anthropic = ["anthropic>=0.40"]
+openai = ["openai>=1.0"]
+mcp = ["mcp>=1.0"]
+all-llm = ["anthropic>=0.40", "openai>=1.0", "mcp>=1.0"]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "pip-tools>=7.0",
+]
+
+[tool.pytest.ini_options]
+addopts = "--import-mode=importlib"
+
+[project.scripts]
+dft-structure-building = "llm_matgen.__main__:main"
+llm-matgen = "llm_matgen.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["llm_matgen*", "dft_structure_building*"]
+
+[tool.setuptools.package-data]
+"llm_matgen.viewer" = ["assets/*.html", "assets/*.js", "assets/*.txt"]
