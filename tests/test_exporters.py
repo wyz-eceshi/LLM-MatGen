@@ -54,6 +54,23 @@ def test_export_does_not_overwrite_and_rejects_unsafe_ids(tmp_path: Path):
         exporter.export_structure(make_fixture(), "../escape", options)
 
 
+def test_export_rejects_same_composition_with_changed_geometry(tmp_path: Path, monkeypatch):
+    from llm_matgen.generators.models import OutputFormat
+    from llm_matgen.io.exporters import ExportOptions, StructureExporter
+
+    changed = make_fixture().copy()
+    changed.scale_lattice(changed.volume * 1.5)
+    monkeypatch.setattr("llm_matgen.io.exporters.read_structure", lambda *args, **kwargs: changed)
+
+    with pytest.raises(ValueError, match="geometry"):
+        StructureExporter().export_structure(
+            make_fixture(),
+            "changed-geometry",
+            ExportOptions(formats=[OutputFormat.POSCAR], output_dir=tmp_path),
+        )
+    assert not list(tmp_path.iterdir())
+
+
 def test_export_lammps_data_has_type_map_and_masses(tmp_path: Path):
     from llm_matgen.generators.models import OutputFormat
     from llm_matgen.io.exporters import ExportOptions, StructureExporter

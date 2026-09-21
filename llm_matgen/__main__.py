@@ -23,6 +23,7 @@ GENERATOR_NAMES = (
     "stacking-fault",
     "dislocation",
     "adsorption",
+    "symmetry-crystal",
 )
 
 
@@ -215,6 +216,19 @@ def _configure_generators(generators) -> None:
     adsorption.add_argument("--run-id")
     adsorption.set_defaults(_handler=_run_generate_adsorption)
 
+    symmetry = _add_leaf(generators, "symmetry-crystal", "generate crystals constrained by a space group recipe")
+    symmetry.add_argument("--open", action="store_true", help="open the generated ball-and-stick viewer")
+    symmetry.add_argument("--recipe", required=True, help="versioned YAML or JSON symmetry-crystal recipe")
+    symmetry.add_argument(
+        "--format", dest="formats", action="append",
+        choices=("poscar", "mson", "cif", "lammps-data"),
+    )
+    symmetry.add_argument("--output-root", default="output")
+    symmetry.add_argument("--max-structures", type=int, default=1000)
+    symmetry.add_argument("--max-atoms", type=int, default=100_000)
+    symmetry.add_argument("--lammps-element", action="append", default=[], metavar="TYPE=ELEMENT")
+    symmetry.set_defaults(_handler=_run_generate)
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -222,6 +236,13 @@ def build_parser() -> argparse.ArgumentParser:
         description="Generate crystal structures with lightweight checks and reproducible manifests.",
     )
     commands = parser.add_subparsers(dest="command")
+    from llm_matgen.structure import configure_parser
+
+    structure = _add_leaf(commands, "structure", "本地结构检查与可追溯单原子修订")
+    configure_parser(structure)
+    structure.set_defaults(_handler=_run_structure)
+    identity = _add_leaf(commands, "build-info", "输出可验证的实际构建身份 JSON")
+    identity.set_defaults(_handler=_run_build_info)
     search = _add_leaf(commands, "search", "search Materials Project structures")
     search.add_argument("--element", dest="elements", action="append")
     search.add_argument("--chemsys")
@@ -262,23 +283,32 @@ def build_parser() -> argparse.ArgumentParser:
     cases = _add_leaf(commands, "cases", "manage the read-only adsorption case index")
     case_commands = cases.add_subparsers(dest="cases_command")
     case_scan = _add_leaf(case_commands, "scan", "scan the registered remote root read-only")
-    case_scan.add_argument("--store-root", default=r"D:\LLM-MatGen-data\adsorption-cases")
-    case_scan.add_argument("--remote-root", default="/public/home/zhangwy01/culuyao", choices=("/public/home/zhangwy01/culuyao",))
-    case_scan.add_argument("--root-id", default="zhangwy01-culuyao")
+    from llm_matgen.adsorption.source import ALLOWED_REMOTE_ROOT
+    from llm_matgen.config import default_data_root
+
+    data_root = default_data_root()
+    case_scan.add_argument("--store-root", default=str(data_root / "adsorption-cases"))
+    case_scan.add_argument(
+        "--remote-root",
+        default=ALLOWED_REMOTE_ROOT,
+        choices=(ALLOWED_REMOTE_ROOT,),
+        help="read-only root configured by LLM_MATGEN_REMOTE_ROOT",
+    )
+    case_scan.add_argument("--root-id", default="llm-matgen-cases")
     case_scan.set_defaults(_handler=_run_cases_scan)
     case_status = _add_leaf(case_commands, "status", "show case index status")
-    case_status.add_argument("--store-root", default=r"D:\LLM-MatGen-data\adsorption-cases")
+    case_status.add_argument("--store-root", default=str(data_root / "adsorption-cases"))
     case_status.set_defaults(_handler=_run_cases_status)
     case_query = _add_leaf(case_commands, "query", "query cases from a JSON feature set")
     case_query.add_argument("--features", required=True)
-    case_query.add_argument("--store-root", default=r"D:\LLM-MatGen-data\adsorption-cases")
+    case_query.add_argument("--store-root", default=str(data_root / "adsorption-cases"))
     case_query.add_argument("--index-revision", type=int)
     case_query.add_argument("--threshold", type=float, default=0.65)
     case_query.add_argument("--limit", type=int, default=5)
     case_query.set_defaults(_handler=_run_cases_query)
     case_inspect = _add_leaf(case_commands, "inspect", "inspect one immutable case revision")
     case_inspect.add_argument("revision_id")
-    case_inspect.add_argument("--store-root", default=r"D:\LLM-MatGen-data\adsorption-cases")
+    case_inspect.add_argument("--store-root", default=str(data_root / "adsorption-cases"))
     case_inspect.set_defaults(_handler=_run_cases_inspect)
 
     revision = _add_leaf(commands, "revision", "import audited manual structure revisions")
@@ -290,7 +320,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     revision_import.add_argument("--revised", required=True)
     revision_import.add_argument("--sidecar", required=True)
-    revision_import.add_argument("--output-root", default=r"D:\LLM-MatGen-data\revisions")
+    revision_import.add_argument("--output-root", default=str(data_root / "revisions"))
     revision_import.set_defaults(_handler=_run_revision_import)
 
     check = _add_leaf(commands, "check", "run lightweight structure checks")
@@ -346,6 +376,17 @@ def build_parser() -> argparse.ArgumentParser:
     set_key.add_argument("value")
     set_key.set_defaults(_handler=_run_config_set_key)
     return parser
+
+
+def _run_structure(args: argparse.Namespace) -> int:
+    return int(args.handler(args))
+
+
+def _run_build_info(args: argparse.Namespace) -> int:
+    from llm_matgen.build_identity import get_build_info
+
+    print(json.dumps(get_build_info(), ensure_ascii=False, indent=2))
+    return EXIT_SUCCESS
 
 
 def _run_mcp(args: argparse.Namespace) -> int:
@@ -454,6 +495,19 @@ def build_generation_request(args: argparse.Namespace):
             "core_position": args.core_position, "radius": args.radius,
             "poisson_ratio": args.poisson_ratio,
         }
+    elif name == "symmetry-crystal":
+        from llm_matgen.generators.symmetry_crystal import load_recipe_file
+
+        recipe_path = Path(args.recipe).resolve()
+        root = Path.cwd().resolve()
+        if not recipe_path.is_relative_to(root):
+            raise ValueError("recipe must remain inside the current workspace")
+        recipe, recipe_sha256 = load_recipe_file(recipe_path)
+        parameters = {
+            "recipe": recipe,
+            "recipe_source": str(recipe_path),
+            "recipe_sha256": recipe_sha256,
+        }
     else:
         raise ValueError(f"unknown generator: {name}")
     parameters = {key: value for key, value in parameters.items() if value is not None}
@@ -461,8 +515,12 @@ def build_generation_request(args: argparse.Namespace):
     output_root = Path(args.output_root).resolve()
     if not output_root.is_relative_to(root):
         raise ValueError("output root must remain inside the current workspace")
-    formats = [OutputFormat(value) for value in (args.formats or ["poscar"])]
-    input_refs = [args.film, args.substrate] if name == "interface" else [args.input]
+    default_formats = ["poscar", "cif", "mson"] if name == "symmetry-crystal" else ["poscar"]
+    formats = [OutputFormat(value) for value in (args.formats or default_formats)]
+    if name == "symmetry-crystal":
+        input_refs = []
+    else:
+        input_refs = [args.film, args.substrate] if name == "interface" else [args.input]
     request = GenerationRequest(
         generator=name,
         input_refs=input_refs,

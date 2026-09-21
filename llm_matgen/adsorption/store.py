@@ -30,8 +30,9 @@ from llm_matgen.adsorption.schema import (
     MIGRATE_V1_TO_V2,
     MIGRATE_V2_TO_V3,
 )
+from llm_matgen.config import default_data_root
 
-DEFAULT_STORE_ROOT = Path(r"D:\LLM-MatGen-data\adsorption-cases")
+DEFAULT_STORE_ROOT = default_data_root() / "adsorption-cases"
 
 
 class AdsorptionStoreError(RuntimeError):

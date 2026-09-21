@@ -17,8 +17,9 @@ from pymatgen.core import Structure
 from pymatgen.io.vasp import Poscar
 
 from llm_matgen.utils.structure import versioned_structure_hashes
+from llm_matgen.config import default_data_root
 
-DEFAULT_REVISION_ROOT = Path(r"D:\LLM-MatGen-data\revisions")
+DEFAULT_REVISION_ROOT = default_data_root() / "revisions"
 
 
 @dataclass(frozen=True)
@@ -195,6 +196,7 @@ class RevisionImporter:
                 "reason": sidecar["reason"],
                 "audit_sidecar": "revision.sidecar.json",
                 "status": "formal_structure_revision",
+                "scientific_approval": "required",
             }
             (staging / "manifest.json").write_text(
                 json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2, allow_nan=False) + "\n",

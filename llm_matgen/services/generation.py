@@ -28,6 +28,8 @@ from llm_matgen.generators import (
     StackingFaultParams,
     SurfaceGenerator,
     SurfaceParams,
+    SymmetryCrystalGenerator,
+    SymmetryCrystalParams,
     VacancyGenerator,
     VacancyParams,
 )
@@ -50,7 +52,7 @@ class GenerationRequest(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
     generator: str
-    input_refs: list[str] = Field(min_length=1)
+    input_refs: list[str] = Field(default_factory=list)
     parameters: dict[str, Any] = Field(default_factory=dict)
     export_options: ExportOptions = Field(default_factory=ExportOptions)
     limits: ExecutionLimits
@@ -102,6 +104,11 @@ def default_generator_registry() -> dict[str, GeneratorEntry]:
                 GeneratorInputSpec("slab", "structure"),
                 GeneratorInputSpec("adsorbate", "molecule"),
             ),
+        ),
+        "symmetry-crystal": GeneratorEntry(
+            SymmetryCrystalGenerator,
+            SymmetryCrystalParams,
+            inputs=(),
         ),
     }
 
@@ -157,7 +164,11 @@ class GenerationService:
         pipeline = GenerationPipeline(request.limits.output_root)
         generator = entry.factory()
         runs: list[PipelineResult] = []
-        if len(entry.inputs) == 2:
+        if len(entry.inputs) == 0:
+            runs.append(
+                pipeline.run(generator, None, params, request.export_options)
+            )
+        elif len(entry.inputs) == 2:
             inputs = InterfaceInput(
                 film=resolved[0].structure,
                 substrate=resolved[1].structure,

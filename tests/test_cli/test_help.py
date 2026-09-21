@@ -9,6 +9,7 @@ def test_cli_exposes_documented_top_level_commands():
     assert set(choices) == {
         "search", "download", "properties", "substrates", "generate",
         "cases", "revision", "check", "export", "db", "mcp", "config",
+        "structure", "build-info",
     }
 
 
@@ -34,7 +35,7 @@ def test_lammps_mapping_help_documents_atomic_number_fallback(capsys):
     assert "atomic numbers" in output
 
 
-def test_generate_help_exposes_all_ten_generators(capsys):
+def test_generate_help_exposes_all_eleven_generators(capsys):
     from llm_matgen.__main__ import build_parser
 
     parser = build_parser()
@@ -43,6 +44,7 @@ def test_generate_help_exposes_all_ten_generators(capsys):
     assert set(choices) == {
         "vacancy", "interstitial", "doping", "solid-solution", "surface",
         "grain-boundary", "interface", "stacking-fault", "dislocation", "adsorption",
+        "symmetry-crystal",
     }
     for command in choices:
         with pytest.raises(SystemExit) as caught:

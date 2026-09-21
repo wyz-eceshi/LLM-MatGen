@@ -19,6 +19,7 @@ from .grain_boundary import GrainBoundaryGenerator, GrainBoundaryParams
 from .interface import InterfaceGenerator, InterfaceInput, InterfaceParams
 from .stacking_fault import StackingFaultGenerator, StackingFaultParams
 from .dislocation import DislocationGenerator, DislocationParams
+from .symmetry_crystal import SymmetryCrystalGenerator, SymmetryCrystalParams
 
 
 def __getattr__(name: str):
@@ -64,6 +65,8 @@ __all__ = [
     "StackingFaultParams",
     "DislocationGenerator",
     "DislocationParams",
+    "SymmetryCrystalGenerator",
+    "SymmetryCrystalParams",
     "AdsorptionGenerationResult",
     "AdsorptionGenerator",
     "AdsorptionInput",

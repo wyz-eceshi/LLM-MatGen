@@ -62,7 +62,9 @@ def test_generation_registry_contains_typed_adsorption_contract():
     assert set(registry) == {
         "vacancy", "interstitial", "doping", "solid-solution", "surface",
         "grain-boundary", "interface", "stacking-fault", "dislocation", "adsorption",
+        "symmetry-crystal",
     }
+    assert registry["symmetry-crystal"].inputs == ()
     assert [(item.role, item.kind) for item in registry["adsorption"].inputs] == [
         ("slab", "structure"), ("adsorbate", "molecule")
     ]

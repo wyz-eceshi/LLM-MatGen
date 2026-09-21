@@ -12,6 +12,17 @@ class ConfigError(ValueError):
     pass
 
 
+def default_data_root() -> Path:
+    """Return a portable data root while preferring the D drive on Windows."""
+    configured = os.environ.get("LLM_MATGEN_DATA_ROOT")
+    if configured:
+        return Path(configured).expanduser()
+    windows_data = Path("D:/LLM-MatGen-data")
+    if os.name == "nt" and windows_data.anchor and Path(windows_data.anchor).exists():
+        return windows_data
+    return Path.home() / ".llm-matgen-data"
+
+
 def _is_sensitive(name: str) -> bool:
     lowered = name.lower()
     return any(token in lowered for token in ("key", "token", "secret", "password"))

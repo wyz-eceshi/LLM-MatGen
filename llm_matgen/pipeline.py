@@ -45,7 +45,7 @@ class GenerationPipeline:
         *,
         checker: LightStructureChecker | None = None,
         exporter: StructureExporter | None = None,
-        software_version: str = "0.2.1",
+        software_version: str = "0.3.0",
     ):
         self.output_root = Path(output_root).resolve()
         self.checker = checker or LightStructureChecker()

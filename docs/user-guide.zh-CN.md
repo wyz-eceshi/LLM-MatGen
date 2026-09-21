@@ -1,6 +1,6 @@
 # LLM-MatGen 中文用户手册
 
-LLM-MatGen 用于生成材料晶体结构，提供命令行、Python 和 MCP 接口，覆盖十类结构生成器。程序默认执行轻量检查，并可导出 POSCAR、MSON、CIF 和 LAMMPS data。
+LLM-MatGen 用于生成材料晶体结构，提供命令行、Python 和 MCP 接口，覆盖十一类结构生成器。程序默认执行轻量检查，并可导出 POSCAR、MSON、CIF 和 LAMMPS data。
 
 本项目只负责结构生成与基础几何检查。用户需要自行完成结构弛豫、能量与稳定性计算，并判断结构是否适合实验、工程应用或学术发表。
 
@@ -18,6 +18,12 @@ LLM-MatGen 用于生成材料晶体结构，提供命令行、Python 和 MCP 接
 git clone <your-repository-url>
 cd LLM-MatGen
 python -m pip install -e .
+```
+
+一次安装全部可选功能（包含 PyXtal、SQS、MCP 和模型适配器）：
+
+```bash
+python -m pip install -e ".[full]"
 ```
 
 可选功能：
@@ -54,7 +60,7 @@ python -m llm_matgen --help
 | `llm-matgen download` | 下载 Materials Project 结构 |
 | `llm-matgen properties` | 查询 Materials Project 性质 |
 | `llm-matgen substrates` | 查询与薄膜结构匹配的基底候选 |
-| `llm-matgen generate` | 使用十类生成器构造结构 |
+| `llm-matgen generate` | 使用十一类生成器构造结构 |
 | `llm-matgen check` | 对结构执行轻量检查 |
 | `llm-matgen export` | 转换结构文件格式 |
 | `llm-matgen db` | 导入、导出或查询本地快照 |
@@ -129,7 +135,7 @@ output/
 
 同一目录中已有同名运行或 manifest 时，程序不会静默覆盖。
 
-## 3. 十类生成器
+## 3. 十一类生成器
 
 参数中的三维整数或浮点矢量均使用逗号分隔，例如 `1,1,1`；二维坐标写作 `0.5,0.5`。
 
@@ -361,6 +367,17 @@ llm-matgen generate dislocation \
 
 输入 primitive 和 conventional 晶胞时 Miller 指数的含义可能不同。指定常见滑移系前，应确认输入晶格基底与所用指数约定一致。
 
+### 3.11 空间群约束晶体
+
+```bash
+llm-matgen generate symmetry-crystal --recipe recipe.yaml --output-root output
+```
+
+该生成器不读取母结构，而是从版本化配方生成普通三维空间群 1–230 的原子晶体。
+显式模式展开用户给出的 Wyckoff 代表坐标；搜索模式需要安装 `.[symmetry]`，用固定
+种子寻找成分兼容的轨道组合。默认同时输出 POSCAR、CIF、MSON 和 `viewer.html`。
+配方结构、Hall 设置和优化审计见[空间群约束晶体生成](symmetry-crystal.md)。
+
 ## 4. 轻量检查
 
 ```bash
@@ -384,7 +401,7 @@ llm-matgen export structure.vasp --format cif --output-root converted
 llm-matgen export structure.cif --format poscar --format lammps-data --output-root converted
 ```
 
-导出后程序会重新读取文件，检查原子数和组成是否保持一致。
+导出后程序会重新读取文件，检查原子数、组成和结构几何是否保持一致；MSON 还检查完整语义。
 
 LAMMPS data 注意事项：
 
@@ -500,7 +517,7 @@ llm-matgen db stats --help
 
 ## 9. 历史案例驱动吸附与人工修订
 
-生产流程由 LLM-MatGen 统一负责。历史案例索引默认保存到 `D:\LLM-MatGen-data\adsorption-cases`，人工修订默认保存到 `D:\LLM-MatGen-data\revisions`。远程案例扫描只能由下列命令显式触发：
+生产流程由 LLM-MatGen 统一负责。数据默认写入 `LLM_MATGEN_DATA_ROOT`；Windows 上存在 D 盘时默认使用 `D:\LLM-MatGen-data`，其他系统使用用户主目录下的 `.llm-matgen-data`。远程案例扫描只能由下列命令显式触发：
 
 ```powershell
 llm-matgen cases scan

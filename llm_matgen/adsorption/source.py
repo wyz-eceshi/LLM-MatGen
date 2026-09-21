@@ -5,8 +5,10 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
 import posixpath
 import re
+import shutil
 import subprocess
 from datetime import datetime, timezone
 from pathlib import PurePosixPath
@@ -17,9 +19,12 @@ from pydantic import Field, field_validator
 from llm_matgen.adsorption.models import StrictModel
 from llm_matgen.generators.models import JsonValue
 
-ALLOWED_REMOTE_ROOT = "/public/home/zhangwy01/culuyao"
-SSH_WRAPPER = r"C:\Users\Administrator\Documents\VASP计算流\scripts\ssh-dft-cluster.ps1"
-POWERSHELL = r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+ALLOWED_REMOTE_ROOT = os.environ.get("LLM_MATGEN_REMOTE_ROOT", "/srv/llm-matgen/cases")
+SSH_WRAPPER = os.environ.get("LLM_MATGEN_SSH_WRAPPER", "ssh-dft-cluster.ps1")
+POWERSHELL = os.environ.get(
+    "LLM_MATGEN_POWERSHELL",
+    shutil.which("pwsh") or shutil.which("powershell.exe") or "powershell.exe",
+)
 ROOT_JOB_DIR = "__scan_root__"
 
 

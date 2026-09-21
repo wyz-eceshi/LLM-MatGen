@@ -103,7 +103,7 @@ def _placeholder(name: str):
 def default_tool_registry(output_root: Any = "output") -> ToolRegistry:
     names = ["generate", "search", "download", "properties", "check", "export", "db_query"]
     descriptions = {
-        "generate":"Generate structures with one of the nine structure generators.", "search":"Search local or Materials Project sources.",
+        "generate":"Generate structures with a registered generator, including source-free symmetry-crystal recipes.", "search":"Search local or Materials Project sources.",
         "download":"Download a referenced structure into the local cache.", "properties":"Query cached material properties.",
         "check":"Run lightweight structural checks.", "export":"Export structures as POSCAR, CIF, or LAMMPS data.", "db_query":"Query local database snapshots."}
     from pathlib import Path
@@ -184,7 +184,7 @@ def default_tool_registry(output_root: Any = "output") -> ToolRegistry:
         {"type": "object"}, download, True))
     from llm_matgen.services.generation import default_generator_registry
     registry.register(ToolDefinition("generate",
-        "Generate structures and an offline HTML viewer from an acquired parent. Unless the user provides a local file, first use search and download to obtain an existing MP structure. arguments are CLI flags, e.g. ['--input','downloaded.cif','--target-element','Si','--count','1']. For adsorption use --slab, --adsorbate and --anchor. Return viewer and source links; output_root is managed by the server.",
+        "Generate structures and an offline HTML viewer. Most generators require an acquired parent; symmetry-crystal is source-free and uses --recipe. arguments are CLI flags, e.g. ['--input','downloaded.cif','--target-element','Si','--count','1'] or ['--recipe','recipe.yaml']. For adsorption use --slab, --adsorbate and --anchor. Return viewer and source links; output_root is managed by the server.",
         {"type": "object", "properties": {"generator": {"type": "string", "enum": list(default_generator_registry())},
          "arguments": {"type": "array", "items": {"type": "string"}}}, "required": ["generator", "arguments"], "additionalProperties": False},
         {"type": "object"}, generate, True))

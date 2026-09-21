@@ -2,19 +2,19 @@
 
 基于原项目 [Xinyang-Li666/LLM-MatGen](https://github.com/Xinyang-Li666/LLM-MatGen) 扩展，保留 MIT 许可证。
 
-[下载 v0.2.1 安装包](https://github.com/wyz-eceshi/LLM-MatGen/releases/download/v0.2.1/llm_matgen-0.2.1-py3-none-any.whl) · [查看发布记录](https://github.com/wyz-eceshi/LLM-MatGen/releases/tag/v0.2.1)
+[下载稳定安装包 v0.3.0](https://github.com/wyz-eceshi/LLM-MatGen/releases/download/v0.3.0/llm_matgen-0.3.0-py3-none-any.whl) · [查看发布记录](https://github.com/wyz-eceshi/LLM-MatGen/releases/tag/v0.3.0)
 
 项目名称已恢复为 LLM-MatGen，主命令为 `llm-matgen`。为兼容改名期间的使用方式，保留 `dft-structure-building` 命令和 `python -m dft_structure_building` 入口。
 
 
-Provider-neutral crystal-structure generation for ten generator families.
+Provider-neutral crystal-structure generation for eleven generator families.
 LLM-MatGen exposes deterministic generators through CLI, Python, and MCP,
 performs lightweight structural checks, and exports POSCAR, CIF, or LAMMPS
 data files.
 
 LLM-MatGen 是一个由任意兼容客户端驱动的材料晶体结构生成工具包。项目负责生成结构、记录参数与来源并执行默认轻量检查；模型与凭据由外部客户端管理。
 
-> 当前版本：`0.2.1`。生成结果不代表结构已经完成弛豫，也不保证热力学稳定性、动力学稳定性、可合成性或发表质量。
+> 当前源码版本：`0.3.0`。生成结果不代表结构已经完成弛豫，也不保证热力学稳定性、动力学稳定性、可合成性或发表质量。
 
 ## 功能
 
@@ -29,6 +29,8 @@ LLM-MatGen 是一个由任意兼容客户端驱动的材料晶体结构生成工
 | 界面   | `interface`      | 匹配薄膜和基底并构造界面                        |
 | 层错   | `stacking-fault` | 按滑移面和位移矢量生成层错                       |
 | 位错   | `dislocation`    | 使用各向同性弹性位移场生成 edge、screw 或 mixed 位错 |
+| 吸附   | `adsorption`     | 在表面构造原子或分子吸附初始构型                    |
+| 空间群晶体 | `symmetry-crystal` | 按 1–230 号空间群、晶胞和 Wyckoff 轨道生成原子晶体 |
 
 支持读取常见晶体结构文件，并可输出：
 
@@ -48,6 +50,18 @@ cd LLM-MatGen
 python -m pip install -e .
 ```
 
+要在一次安装中获得 PyXtal 空间群搜索、SQS、MCP 和所有模型适配器，使用：
+
+```bash
+python -m pip install -e ".[full]"
+```
+
+也可以直接从 GitHub Release 安装完整功能版：
+
+```bash
+python -m pip install "llm-matgen[full] @ https://github.com/wyz-eceshi/LLM-MatGen/releases/download/v0.3.0/llm_matgen-0.3.0-py3-none-any.whl"
+```
+
 按需安装可选功能：
 
 ```bash
@@ -56,6 +70,9 @@ python -m pip install -e ".[mcp]"
 
 # SQS 固溶体
 python -m pip install -e ".[sqs]"
+
+# 空间群自动搜索；显式轨道模式不需要此项
+python -m pip install -e ".[symmetry]"
 
 # 开发与测试
 python -m pip install -e ".[dev]"
@@ -82,7 +99,7 @@ python -m llm_matgen --help
 | `llm-matgen download` | 下载 Materials Project 结构 |
 | `llm-matgen properties` | 查询材料性质 |
 | `llm-matgen substrates` | 查询薄膜结构对应的基底候选 |
-| `llm-matgen generate` | 使用十类生成器构造结构 |
+| `llm-matgen generate` | 使用十一类生成器构造结构 |
 | `llm-matgen check` | 执行轻量结构检查 |
 | `llm-matgen export` | 转换 POSCAR、CIF 或 LAMMPS data |
 | `llm-matgen db` | 管理本地数据库快照 |
@@ -142,9 +159,25 @@ llm-matgen export path/to/si.cif --format lammps-data --output-root output
 
 每次生成都会保存结构文件及可复现信息，包括实际参数、结构哈希、随机种子、来源和 manifest。
 
+## 空间群约束晶体
+
+用版本化 YAML/JSON 配方显式展开 Wyckoff 轨道，或用可选 PyXtal 后端搜索兼容组合：
+
+```bash
+llm-matgen generate symmetry-crystal --recipe recipe.yaml --output-root output
+```
+
+该生成器覆盖普通三维空间群 1–230。默认同时输出 POSCAR、CIF、MSON 和结构预览，并把所有结果标记为 `geometry_status=passed`、`relaxation_status=unknown`。完整配方、Hall 设置、限制条件和审计说明见[空间群约束晶体生成](docs/symmetry-crystal.md)。
+
+优化完成后可保存人工标签并检查晶胞失控、非均匀位移和近邻网络变化：
+
+```bash
+llm-matgen structure relaxation-audit --initial POSCAR --final CONTCAR --label failed --reason "ISIF=3 后晶胞失控" --output relaxation-audit.json
+```
+
 ## 生成后直接查看结构
 
-参考 dft-structure-viewer 的交互方式，全部十类生成流程现在默认在结果目录生成 `viewer.html`。
+参考 dft-structure-viewer 的交互方式，全部十一类生成流程现在默认在结果目录生成 `viewer.html`。
 页面内置 3Dmol.js，可离线打开，支持球棍模型、旋转/缩放/平移、候选切换、晶胞显示、
 1 起始原子编号、点击多选、原子坐标与固定状态、XY/XZ/YZ 视角及重置。
 吸附结果还提供干净表面作为可切换的参考结构。
@@ -188,7 +221,7 @@ llm-matgen revision import `
 
 新 sidecar 会记录父结构绝对路径和哈希；该路径仍是可读普通文件且哈希一致时可省略 `--parent`。旧 sidecar、相对路径、符号链接、路径失效或哈希不一致时必须显式提供父 POSCAR。
 
-`cases scan` 是唯一会访问远程案例目录的命令，且只允许只读扫描 `/public/home/zhangwy01/culuyao`。生成命令不会触发扫描。`prefer` 在索引不可用或无匹配时保留原因并退回几何生成；`require` 则明确失败。
+`cases scan` 是唯一会访问远程案例目录的命令。它只读扫描 `LLM_MATGEN_REMOTE_ROOT` 指定的单一根目录，并通过 `LLM_MATGEN_SSH_WRAPPER` 指定的脚本连接集群。生成命令不会触发扫描。`prefer` 在索引不可用或无匹配时保留原因并退回几何生成；`require` 则明确失败。
 
 吸附包固定包含候选 POSCAR、可完整恢复 site properties 的 MSON、RetrievalTrace、reference artifacts、manifest 和 DFT 比较矩阵。所有候选只表示“初始构型”。本项目不训练模型、不自动运行或提交 VASP、不生成 POTCAR、不从单个总能计算吸附能，也不宣称最低能位点。
 
@@ -229,6 +262,24 @@ MCP 客户端负责选择模型、管理模型凭据并把自然语言请求转�
 既有生成器的自然语言工作流示例见 [自然语言工作流](docs/examples/natural-language-workflows.md)，吸附命令见上节，MCP 接口说明见 [MCP 文档](docs/mcp.md)。
 
 ## Python 接口
+
+本地结构检查、单原子人工修订与实际构建身份：
+
+```bash
+llm-matgen structure inspect --input POSCAR
+llm-matgen structure validate --input POSCAR --min-distance 0.7
+llm-matgen structure adjust-coordinate --input POSCAR --index 2 --delta-cartesian 0 0 0.2 --reason "人工校正" --output POSCAR.revised
+llm-matgen revision import --revised POSCAR.revised --sidecar POSCAR.revised.revision.json --output-root revisions
+llm-matgen build-info
+```
+
+原子编号从 1 开始。坐标模式恰选一种：`--set-cartesian X Y Z`、
+`--set-fractional U V W` 或 `--delta-cartesian DX DY DZ`；原因不能为空。
+输入、已有输出与审计 sidecar 不得覆盖。修订保留原子顺序、晶胞和原有约束，
+sidecar 记录父/输出哈希及前后坐标。默认 sidecar 为 `<output>.revision.json`。
+`inspect` 汇总几何问题；`validate` 遇到问题返回非零。导入沿用旧 v1 sidecar，
+且须在包含相关文件的工作目录运行。导入后的 `scientific_approval` 为 `required`，
+需独立科学审查。完整接口与构建证据说明见 [本地结构与构建身份](docs/structure-local.md)。
 
 生成器、参数模型、检查器和导出器均可直接作为 Python 库使用。公共接口与最小示例见 [API 文档](docs/api.md)。
 

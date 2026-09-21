@@ -63,7 +63,7 @@ class MCPServer:
             return {"jsonrpc": "2.0", "id": req_id, "result": {
                 "protocolVersion": self.protocol_version,
                 "capabilities": {"tools": {}, "resources": {}},
-                "serverInfo": {"name": "llm-matgen", "version": "0.2.1"}}}
+                "serverInfo": {"name": "llm-matgen", "version": "0.3.0"}}}
         if method == "tools/list":
             return {"jsonrpc": "2.0", "id": req_id,
                     "result": {"tools": [self._tool_payload(t) for t in self._tools()]}}

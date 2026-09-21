@@ -41,11 +41,13 @@ def test_env_example_contains_only_a_placeholder_mp_key() -> None:
 
 
 def test_mit_license_is_present_and_declared():
+    import tomllib
+
     license_text = (ROOT / "LICENSE").read_text(encoding="utf-8")
-    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 
     assert "MIT License" in license_text
-    assert 'license = { text = "MIT" }' in pyproject
+    assert pyproject["project"]["license"] == "MIT"
 
 
 def test_scanner_detects_secrets_and_personal_absolute_paths() -> None:

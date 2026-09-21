@@ -9,6 +9,10 @@ import sys
 import pytest
 
 
+REMOTE_ROOT = "/srv/llm-matgen/cases"
+SSH_WRAPPER = "ssh-dft-cluster.ps1"
+
+
 class SnapshotRunner:
     def __init__(self, *, missing=(), mutate_on_second=()):
         self.missing = set(missing)
@@ -80,8 +84,10 @@ def test_ssh_source_rejects_root_escape_and_unsafe_paths():
     from llm_matgen.adsorption.source import SSHRemoteFileSource
 
     with pytest.raises(ValueError, match="allowed root"):
+        SSHRemoteFileSource(remote_root="relative/path")
+    with pytest.raises(ValueError, match="allowed root"):
         SSHRemoteFileSource(remote_root="/tmp")
-    source = SSHRemoteFileSource()
+    source = SSHRemoteFileSource(remote_root=REMOTE_ROOT, wrapper_path=SSH_WRAPPER)
     for path in ("../escape", "/etc/passwd", "jobs/../escape", "bad\nname", "bad\x00name"):
         with pytest.raises(ValueError):
             source.validate_relative_path(path)
@@ -92,7 +98,7 @@ def test_snapshot_base64_encodes_untrusted_but_in_root_job_path():
     from llm_matgen.adsorption.source import SSHRemoteFileSource
 
     runner = SnapshotRunner(missing=("POSCAR", "CONTCAR", "INCAR", "OUTCAR"))
-    source = SSHRemoteFileSource(runner=runner)
+    source = SSHRemoteFileSource(remote_root=REMOTE_ROOT, wrapper_path=SSH_WRAPPER, runner=runner)
     source.snapshot("Ni P/吸附's case", root_id="cluster-a")
     command = runner.calls[0][0][-1]
     assert "Ni P" not in command
@@ -115,12 +121,12 @@ def test_ssh_invocation_uses_argument_list_no_shell_and_read_only_discovery():
         calls.append((args, kwargs))
         return Result()
 
-    source = SSHRemoteFileSource(runner=runner)
-    source.discover("/public/home/zhangwy01/culuyao")
+    source = SSHRemoteFileSource(remote_root=REMOTE_ROOT, wrapper_path=SSH_WRAPPER, runner=runner)
+    source.discover(REMOTE_ROOT)
     args, kwargs = calls[0]
     assert isinstance(args, list)
     assert kwargs["shell"] is False
-    assert args[0].lower().endswith("powershell.exe")
+    assert Path(args[0]).name.lower() in {"powershell.exe", "pwsh.exe", "pwsh"}
     command = args[-1]
     assert "find -P" in command
     assert "-print0" in command

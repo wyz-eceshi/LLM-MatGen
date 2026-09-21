@@ -16,6 +16,7 @@ from pymatgen.core import Structure
 from pymatgen.core.periodic_table import Element
 from pymatgen.io.cif import CifWriter
 from pymatgen.io.vasp import Poscar
+from pymatgen.analysis.structure_matcher import StructureMatcher
 from uuid import uuid4
 
 from llm_matgen.generators.models import OutputFormat
@@ -58,6 +59,18 @@ class StructureExporter:
             )
         )
 
+    @staticmethod
+    def _geometry_equivalent(left: Structure, right: Structure) -> bool:
+        matcher = StructureMatcher(
+            primitive_cell=False,
+            scale=False,
+            attempt_supercell=False,
+            ltol=1e-5,
+            stol=1e-5,
+            angle_tol=1e-3,
+        )
+        return bool(matcher.fit(left, right))
+
     def export_structure(
         self,
         structure: Structure,
@@ -83,6 +96,11 @@ class StructureExporter:
             ):
                 path.unlink(missing_ok=True)
                 raise ValueError(f"{fmt.value} round-trip changed structure composition")
+            if fmt in {OutputFormat.POSCAR, OutputFormat.CIF} and not self._geometry_equivalent(
+                restored, structure
+            ):
+                path.unlink(missing_ok=True)
+                raise ValueError(f"{fmt.value} round-trip changed structure geometry")
             if fmt is OutputFormat.MSON and self._normalized_mson(
                 restored
             ) != self._normalized_mson(structure):

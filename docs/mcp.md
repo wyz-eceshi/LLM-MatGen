@@ -6,15 +6,17 @@ The server exposes the same deterministic Tool Registry through `initialize`,
 are relative to the configured output root and must be present in a manifest;
 path traversal and unregistered files are rejected.
 
-## 生成与可视化（0.2.0）
+## 生成与可视化（0.3.0）
 
-默认 generate 工具已接通本地十类生成器，参数示例：
+默认 generate 工具已接通本地十一类生成器，参数示例：
 
 ```json
 {"generator":"vacancy","arguments":["--input","Si.cif","--target-element","Si","--count","1"]}
 ```
 
 arguments 为对应 CLI 的参数数组，不经过 shell；输出目录由 MCP 服务设置。
+`symmetry-crystal` 是无母结构生成器，arguments 通过 `--recipe` 指向 MCP 工作区内的
+YAML/JSON 配方；显式模式属于基础安装，搜索模式需要 `llm-matgen[symmetry]`。
 工具返回 viewer 路径和 artifact:// 引用，resources/read 返回 text/html。
 客户端应向用户展示查看链接或打开 HTML；MCP 不启动浏览器。search 和 download 在 0.2.1 已接通；其它查询工具仍需应用上下文配置。
 
