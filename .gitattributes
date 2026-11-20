@@ -1,0 +1,3 @@
+# 构建身份校验使用原始文件字节。
+llm_matgen/** -text
+dft_structure_building/** -text

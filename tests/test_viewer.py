@@ -94,3 +94,18 @@ def test_mcp_rejects_browser_flag_abbreviation(tmp_path, monkeypatch):
         'generator': 'vacancy', 'arguments': ['--input', 'input.cif', '--target-element', 'Si', '--count', '1', '--op']})
     assert not result.ok
     assert result.error_code == 'invalid_arguments'
+
+
+def test_side_views_keep_z_pointing_up():
+    """XZ must show x right / z up and YZ y right / z up (verified in headless Edge with 3Dmol).
+
+    The former rotate(90,'x') put +z at the bottom of the screen, so adsorbates on top
+    of a slab were drawn underneath it. Browser evidence: viewer-probe/fixed.json in
+    D:/ClaudeWork/matgen-co2-fix-20261105.
+    """
+    from importlib.resources import files
+
+    html = files("llm_matgen.viewer").joinpath("assets/viewer.html").read_text(encoding="utf-8")
+    assert "if(kind==='xz')viewer.rotate(-90,'x');" in html
+    assert "if(kind==='yz'){viewer.rotate(-90,'y');viewer.rotate(-90,'x');}" in html
+    assert "rotate(90,'x')" not in html

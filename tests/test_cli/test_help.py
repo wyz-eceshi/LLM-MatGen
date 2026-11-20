@@ -9,7 +9,7 @@ def test_cli_exposes_documented_top_level_commands():
     assert set(choices) == {
         "search", "download", "properties", "substrates", "generate",
         "cases", "revision", "check", "export", "db", "mcp", "config",
-        "structure", "build-info",
+        "structure", "build-info", "mof", "hetero",
     }
 
 

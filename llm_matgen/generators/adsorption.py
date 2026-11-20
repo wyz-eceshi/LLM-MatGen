@@ -612,7 +612,7 @@ class AdsorptionGenerator:
             magnetic_sensitive=value.spin_multiplicity > 1
             or any(element.is_transition_metal for element in elements),
             plus_u_sensitive=any(
-                element.is_transition_metal or element.is_rare_earth_metal
+                element.is_transition_metal or element.is_lanthanoid or element.is_actinoid
                 for element in elements
             ),
             gas_reference_strategy=gas_strategy,

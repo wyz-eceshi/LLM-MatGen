@@ -143,6 +143,67 @@ def test_validator_checks_adsorbate_2d_periodic_images_and_both_vacuum_sides():
     )
 
 
+def co2() -> Molecule:
+    return Molecule(["O", "C", "O"], [[0.0, 0.0, 0.0], [0.0, 0.0, 1.16], [0.0, 0.0, 2.32]])
+
+
+def co2_candidate(slab: Structure, coordinates) -> Structure:
+    value = slab.copy()
+    for symbol, coordinate in zip(("O", "C", "O"), coordinates):
+        value.append(symbol, coordinate, coords_are_cartesian=True)
+    return value
+
+
+def test_periodic_image_check_ignores_intramolecular_bonds_in_home_cell():
+    """A short C=O bond inside one molecule is not a periodic-image contact."""
+    from llm_matgen.adsorption.validation import AdsorptionCandidateValidator
+
+    slab = layered_non_z_slab()
+    top_x = max(np.asarray(slab.cart_coords)[:, 0])
+    upright = co2_candidate(
+        slab,
+        [(top_x + 1.8, 0.0, 0.0), (top_x + 2.96, 0.0, 0.0), (top_x + 4.12, 0.0, 0.0)],
+    )
+    validator = AdsorptionCandidateValidator(
+        slab,
+        co2(),
+        anchor_zero_based=0,
+        anchor_contact_window=(0.75, 1.35),
+        min_vacuum_each_side=3.0,
+    )
+
+    report = validator.validate(upright, proposal(slab))
+
+    assert "adsorbate_periodic_image" not in reason_codes(report)
+    assert report.accepted, report.issues
+
+
+def test_periodic_image_check_still_rejects_different_atoms_in_neighbor_image():
+    """Atom i against a translated copy of atom j (i != j) is still a real contact."""
+    from llm_matgen.adsorption.validation import AdsorptionCandidateValidator
+
+    slab = layered_non_z_slab(inplane=3.0)
+    top_x = max(np.asarray(slab.cart_coords)[:, 0])
+    # Flat CO2 along the 3.0 A in-plane axis: terminal O at 2.32 A meets the
+    # neighbor-image copy of the other terminal O at 3.0 A (0.68 A apart),
+    # while every atom's own image stays 3.0 A away.
+    flat = co2_candidate(
+        slab,
+        [(top_x + 1.8, 0.0, 0.0), (top_x + 1.8, 1.16, 0.0), (top_x + 1.8, 2.32, 0.0)],
+    )
+    validator = AdsorptionCandidateValidator(
+        slab,
+        co2(),
+        anchor_zero_based=0,
+        min_vacuum_each_side=3.0,
+    )
+
+    report = validator.validate(flat, proposal(slab))
+
+    issue = next(i for i in report.issues if i.code == "adsorbate_periodic_image")
+    assert issue.details["distance"] < 0.7
+
+
 def test_validator_finds_short_2d_image_requiring_large_integer_coefficient():
     from llm_matgen.adsorption.validation import AdsorptionCandidateValidator
 

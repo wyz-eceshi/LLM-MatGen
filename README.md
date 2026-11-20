@@ -1,5 +1,9 @@
 # LLM-MatGen
 
+**开发预发布 `0.4.0.dev1`** · [下载 wheel](https://github.com/wyz-eceshi/LLM-MatGen/releases/download/v0.4.0.dev1/llm_matgen-0.4.0.dev1-py3-none-any.whl) · [MOF 与异质结使用说明](docs/mof-hetero-使用说明.md)
+
+安装预发布 wheel 后，运行 `python -m llm_matgen mof --help` 或 `python -m llm_matgen hetero --help` 查看操作。模型输出是待优化的候选结构。
+
 基于原项目 [Xinyang-Li666/LLM-MatGen](https://github.com/Xinyang-Li666/LLM-MatGen) 扩展，保留 MIT 许可证。
 
 [下载稳定安装包 v0.3.0](https://github.com/wyz-eceshi/LLM-MatGen/releases/download/v0.3.0/llm_matgen-0.3.0-py3-none-any.whl) · [查看发布记录](https://github.com/wyz-eceshi/LLM-MatGen/releases/tag/v0.3.0)
@@ -14,7 +18,7 @@ data files.
 
 LLM-MatGen 是一个由任意兼容客户端驱动的材料晶体结构生成工具包。项目负责生成结构、记录参数与来源并执行默认轻量检查；模型与凭据由外部客户端管理。
 
-> 当前源码版本：`0.3.0`。生成结果不代表结构已经完成弛豫，也不保证热力学稳定性、动力学稳定性、可合成性或发表质量。
+> 当前源码版本：`0.4.0.dev1`。生成结果不代表结构已经完成弛豫，也不保证热力学稳定性、动力学稳定性、可合成性或发表质量。
 
 ## 功能
 

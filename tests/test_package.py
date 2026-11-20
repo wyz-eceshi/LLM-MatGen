@@ -1,7 +1,10 @@
 def test_package_exposes_version():
+    from pathlib import Path
+    import tomllib
     import llm_matgen
 
-    assert llm_matgen.__version__ == "0.3.0"
+    with (Path(__file__).parents[1] / "pyproject.toml").open("rb") as metadata:
+        assert llm_matgen.__version__ == tomllib.load(metadata)["project"]["version"]
 
 
 def test_public_subpackages_export_core_types():

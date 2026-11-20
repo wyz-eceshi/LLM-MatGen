@@ -230,12 +230,33 @@ def _configure_generators(generators) -> None:
     symmetry.set_defaults(_handler=_run_generate)
 
 
+def _reserved_operation(args: argparse.Namespace) -> int:
+    args._selected_parser.print_help()
+    return EXIT_PARAMETER
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="llm-matgen",
         description="Generate crystal structures with lightweight checks and reproducible manifests.",
     )
     commands = parser.add_subparsers(dest="command")
+    from llm_matgen import hetero, mof
+    from llm_matgen.mof import cli as mof_cli
+    from llm_matgen.hetero import cli as hetero_cli
+
+    for name, operations in (("mof", mof.OPERATIONS), ("hetero", hetero.OPERATIONS)):
+        group = _add_leaf(commands, name, "结构建模子命令")
+        operations_parser = group.add_subparsers(dest="operation")
+        for operation in operations:
+            cli = mof_cli if name == "mof" else hetero_cli
+            if operation in cli.HELP:
+                leaf = _add_leaf(operations_parser, operation, cli.HELP[operation])
+                cli.configure(leaf, operation)
+            else:
+                leaf = _add_leaf(operations_parser, operation, "预留操作，仅提供帮助")
+                leaf.set_defaults(_handler=_reserved_operation)
+
     from llm_matgen.structure import configure_parser
 
     structure = _add_leaf(commands, "structure", "本地结构检查与可追溯单原子修订")

@@ -335,11 +335,15 @@ class AdsorptionCandidateValidator:
             image_failure = None
             for left in range(ads_count):
                 for right in range(left, ads_count):
+                    # The zero translation is the molecule itself: for i == j it is
+                    # the atom, for i != j it is an intramolecular bond, which the
+                    # rigid-distance and bond-graph checks above already cover.
+                    # Only translated copies are periodic images.
                     distance = shortest_2d_image_distance(
                         ads_coords[right] - ads_coords[left],
                         inplane[0],
                         inplane[1],
-                        exclude_zero_image=left == right,
+                        exclude_zero_image=True,
                     )
                     cutoff = 0.85 * (
                         element_radius(str(self.adsorbate[left].specie))

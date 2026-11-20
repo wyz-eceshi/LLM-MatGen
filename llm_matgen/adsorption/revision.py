@@ -42,6 +42,37 @@ def _triplet(value, name: str) -> np.ndarray:
 
 class RevisionImporter:
     @staticmethod
+    def archive_interface(database, parents, product_dir):
+        """原子映射随候选入库。两个父快照与候选通过同一事务写入。"""
+        from uuid import NAMESPACE_URL, uuid5
+        from llm_matgen.database.store import LocalStore
+        from llm_matgen.database.models import MaterialSnapshot
+        from llm_matgen.mof.cif import read_model
+
+        product_dir=Path(product_dir)
+        sidecar=product_dir/"sidecar.json"
+        metadata=json.loads(sidecar.read_text("utf8"))
+        paths=[Path(p) for p in parents]+[product_dir/"structure.cif"]
+        hashes=[_sha256(p) for p in paths]
+        if hashes!=metadata["parent_sha256"]+[metadata["product_sha256"]]:
+            raise ValueError("双父结构或产物摘要不匹配")
+        ids=[uuid5(NAMESPACE_URL,"matgen:parent:"+h) for h in hashes[:2]]
+        ids.append(uuid5(NAMESPACE_URL,"matgen:hetero:"+_sha256(sidecar)))
+        snapshots=[]
+        for i,(path,digest,identifier) in enumerate(zip(paths,hashes,ids,strict=True)):
+            structure=read_model(path).structure
+            elements=sorted({site.specie.symbol for site in structure})
+            raw=dict(structure=json.loads(structure.to_json()),file_sha256=digest)
+            if i==2:
+                raw.update(parent_snapshot_ids=[str(x) for x in ids[:2]],sidecar=metadata)
+            snapshots.append(MaterialSnapshot(snapshot_id=identifier,material_id=str(identifier),
+                formula=structure.composition.formula,elements=elements,n_elements=len(elements),
+                structure_hash=versioned_structure_hashes(structure)["v2"],raw_json=raw,
+                fetched_at=datetime.now(timezone.utc)))
+        LocalStore(Path(database)).insert_batch(snapshots,atomic=True)
+        return str(ids[2])
+
+    @staticmethod
     def parent_from_sidecar(sidecar_path: Path | str) -> Path:
         """Resolve a sidecar-recorded parent only when identity is verifiable."""
 

@@ -24,6 +24,7 @@ class DopingParams(RandomGenerationParams):
     dopant_elements: list[str] = Field(min_length=1)
     target_elements: list[str] = Field(min_length=1)
     dopant_counts: list[PositiveInt]
+    target_site_indices: list[PositiveInt] | None = None
     variants_per_combination: PositiveInt = 1
     allow_repeated_dopant: bool = False
     supercell: Supercell | None = None
@@ -43,6 +44,11 @@ class DopingGenerator:
         target_indices = [
             index for index, site in enumerate(source) if site.specie.symbol in target_set
         ]
+        if params.target_site_indices is not None:
+            specified = [i-1 for i in params.target_site_indices]
+            if len(set(specified)) != len(specified) or not set(specified).issubset(target_indices):
+                raise ValueError("指定掺杂位点越界、重复或元素不匹配")
+            target_indices = sorted(specified)
         if not target_indices:
             raise ValueError("target elements are not present in the input structure")
         resolved_seed = params.seed
